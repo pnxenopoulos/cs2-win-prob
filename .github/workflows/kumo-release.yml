@@ -1,0 +1,67 @@
+name: Fit Kumo from release dataset
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag containing cs2-round-states.parquet
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  fit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download dataset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+        run: |
+          : "${RELEASE_TAG:?A dataset release tag is required}"
+          mkdir -p artifacts/release-input
+          gh release download --repo "$GITHUB_REPOSITORY" \
+            --pattern cs2-round-states.parquet --dir artifacts/release-input -- "$RELEASE_TAG"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.28"
+          python-version: "3.15"
+          enable-cache: false
+
+      - name: Fit and evaluate Kumo
+        env:
+          OMP_NUM_THREADS: "2"
+          MKL_NUM_THREADS: "2"
+        run: |
+          uv run --locked --no-dev --group kumo cs-win-prob-fit-release \
+            artifacts/release-input/cs2-round-states.parquet \
+            --output-dir artifacts/release-model --device cpu --target round_end_reason
+
+      - name: Summarize evaluation
+        run: |
+          {
+            printf '%s\n' '### Kumo held-out demo evaluation' '```json'
+            cat artifacts/release-model/metrics.json
+            printf '%s\n' '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload fitted context and metrics
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kumo-round-end-reason
+          path: |
+            artifacts/release-model/round-end-reason-context.parquet
+            artifacts/release-model/metrics.json
+          if-no-files-found: error
