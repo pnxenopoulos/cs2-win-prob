@@ -218,3 +218,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Counter-Strike demo recordings
+*.dem
+*.dem*Zone.Identifier
+
+demos/**/*.rar
+artifacts/

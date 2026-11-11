@@ -1,0 +1,37 @@
+[project]
+name = "cs-win-prob"
+version = "0.1.0"
+description = "Counter-Strike win probability models"
+readme = "README.md"
+authors = [
+    { name = "Peter Xenopoulos", email = "pnxenopoulos@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "awpy>=3.1.2",
+    "polars>=2,<3",
+]
+
+[project.scripts]
+cs-win-prob = "cs_win_prob:main"
+cs-win-prob-train-kumo = "cs_win_prob.kumo:main"
+cs-win-prob-train-demos = "cs_win_prob.demo_training:main"
+cs-win-prob-plot-rounds = "cs_win_prob.round_plot:main"
+cs-win-prob-export-dataset = "cs_win_prob.dataset:main"
+cs-win-prob-fit-release = "cs_win_prob.release_training:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "ruff>=0.17.4",
+    "ty>=0.0.101",
+]
+kumo = [
+    "structured-data-models>=0.2.1",
+    "torch>=2.7",
+]
+plot = ["matplotlib>=3.10"]
