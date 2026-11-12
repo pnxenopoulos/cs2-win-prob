@@ -15,9 +15,17 @@ from cs_win_prob.data_preparation import (
     demo_metadata,
 )
 from cs_win_prob.dataset import export_dataset
+from cs_win_prob.release_metadata import (
+    DATASET_MANIFEST,
+    dataset_manifest,
+    model_manifest,
+    write_manifest,
+)
 
 
-def _write_demo_states(directory: Path, number: int) -> str:
+def _write_demo_states(
+    directory: Path, number: int, *, include_tick: bool = False
+) -> str:
     digest = sha256(f"demo bytes {number}".encode()).hexdigest()
     states = pl.DataFrame(
         {
@@ -28,6 +36,8 @@ def _write_demo_states(directory: Path, number: int) -> str:
             "round_end_reason": ["bomb_defusal", "ct_eliminated"],
         }
     ).with_columns(*(pl.lit(0).alias(name) for name in FEATURE_COLUMNS[3:]))
+    if include_tick:
+        states = states.with_columns(pl.Series("tick", [100, 200], dtype=pl.Int32))
     states.write_parquet(
         directory / f"states-{number}.parquet",
         metadata=demo_metadata(Path(f"match-{number}.dem"), digest),
@@ -129,3 +139,29 @@ def test_release_fit_rejects_demo_in_both_splits(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="belong to exactly one split"):
         release_training.fit_release(dataset_path, tmp_path / "model")
+
+
+def test_versioned_model_requires_the_released_snapshot_data(tmp_path: Path) -> None:
+    for number in range(2):
+        _write_demo_states(tmp_path, number, include_tick=True)
+    path = tmp_path / "cs2-round-states.parquet"
+    export_dataset(tmp_path, path)
+    tag = "data/round-states-tabular/v1.0.0"
+    dataset = dataset_manifest(path, tag)
+    write_manifest(path.with_name(DATASET_MANIFEST), dataset)
+
+    model_tag = "model/kumo-round-end/v1.2.3"
+    model = model_manifest(path, tag, model_tag, "a" * 40, "round_end_reason")
+    assert model["tag"] == model_tag
+    assert model["version"] == "1.2.3"
+    assert model["dataset"] == dataset
+    assert dataset["snapshot_key"] == ["demo_sha256", "tick"]
+
+    states = pl.read_parquet(path)
+    states.with_columns(pl.col("time_since_phase_start") + 1).write_parquet(path)
+    with pytest.raises(ValueError, match="manifest does not match"):
+        model_manifest(path, tag, model_tag, "a" * 40, "round_end_reason")
+
+    pl.concat([states, states.head(1)]).write_parquet(path)
+    with pytest.raises(ValueError, match="unique .* key"):
+        dataset_manifest(path, tag)

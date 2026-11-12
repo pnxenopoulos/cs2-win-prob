@@ -96,6 +96,12 @@ def test_samples_live_round_and_resets_clock_at_completed_plant() -> None:
     assert states["defuse_in_progress"].to_list() == [False, False, True, True]
     assert states["ct_distance_to_bomb"].to_list() == [None, None, 13.0, 13.0]
     assert states["t_distance_to_bomb"].to_list() == [None, None, 5.0, 5.0]
+    assert prepare_demo(demo, seed=42, include_tick=True)["tick"].to_list() == [
+        100,
+        101,
+        102,
+        103,
+    ]
 
 
 def test_replaces_missing_exact_tick_with_a_recorded_tick() -> None:

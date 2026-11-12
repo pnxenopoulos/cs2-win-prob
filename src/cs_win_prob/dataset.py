@@ -21,6 +21,35 @@ DEFAULT_TEST_FRACTION = 0.2
 DATASET_FILENAME = "cs2-round-states.parquet"
 
 
+def split_counts(dataset: pl.LazyFrame) -> dict[str, dict[str, int]]:
+    """Validate demo provenance and count the two dataset splits."""
+    demos = (
+        dataset.group_by("demo_id", "demo_filename", "demo_sha256", "split")
+        .len()
+        .collect(engine="streaming")
+    )
+    invalid = demos.filter(
+        ~pl.col("demo_sha256").str.contains(r"^[0-9a-f]{64}$").fill_null(False)
+        | ~(pl.col("demo_id") == pl.col("demo_sha256")).fill_null(False)
+        | (pl.col("demo_filename").fill_null("") == "")
+    )
+    if not invalid.is_empty():
+        raise ValueError(
+            "dataset must include a filename and SHA-256 demo ID for every row"
+        )
+    if demos["demo_id"].n_unique() != demos.height:
+        raise ValueError(
+            "each demo must have consistent provenance and belong to exactly one split"
+        )
+    if set(demos["split"]) != {"train", "test"}:
+        raise ValueError("dataset must contain nonempty train and test splits")
+    counts = demos.group_by("split").agg(demos=pl.len(), rows=pl.col("len").sum())
+    return {
+        split: {"demos": demo_count, "rows": rows}
+        for split, demo_count, rows in counts.iter_rows()
+    }
+
+
 def _demo_provenance(path: Path) -> tuple[str, str]:
     encoded = pl.read_parquet_metadata(path).get(DEMO_METADATA_KEY)
     if encoded is None:
@@ -136,14 +165,16 @@ def export_dataset(
             "split": splits,
         }
     )
+    source_columns = source.collect_schema().names()
     dataset = source.join(
         assignments.lazy(), on="_source", how="inner", maintain_order="left"
     ).select(
         "demo_id",
         "demo_filename",
         "demo_sha256",
+        *(("tick",) if "tick" in source_columns else ()),
         "split",
-        *available_feature_columns(source.collect_schema().names()),
+        *available_feature_columns(source_columns),
         TARGET,
     )
     output.parent.mkdir(parents=True, exist_ok=True)

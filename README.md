@@ -99,31 +99,68 @@ and the round decision. Each panel shows the estimated CT probability and
 the actual winning side. Use `--predictions` to also save the CT and T
 probabilities at each scored tick as Parquet.
 
-## Release a dataset and fit in GitHub Actions
+## Version datasets and models independently
 
-Prepare one Parquet per demo and combine them into the release asset.
+### Release tags
+
+All datasets describe round states. Name new dataset families by representation
+using `data/<representation>/vX.Y.Z`, such as `data/graph/v1.0.0`. The current
+Kumo workflow accepts tabular datasets tagged `data/round-states-tabular/vX.Y.Z`.
+
+Name models by architecture and prediction target using
+`model/<architecture>-<target>/vX.Y.Z`. For example,
+`model/kumo-round-end/v1.0.0` predicts the round-end reason. Use `round-win` in
+the name of a model that predicts the winning side.
+
+- **Dataset versions.** Use a minor bump for added demos or compatible columns,
+  a patch for corrections, and a major bump for breaking schema changes.
+- **Model versions.** Use a minor bump for a retrain with a compatible inference
+  interface, a patch for packaging or metadata fixes, and a major bump for a
+  breaking inference change. Give a different architecture its own model name.
+  Reuse the dataset tag when only the model changes.
+
+### Create a release
+
+Prepare one Parquet per demo, combine them, and write a manifest for the dataset tag.
 
 ```sh
-uv run cs-win-prob-train-demos demos/ --prepare-only --states-dir artifacts/release-states
-uv run cs-win-prob-export-dataset artifacts/release-states \
-  --output artifacts/cs2-round-states.parquet
+DATASET_TAG=data/round-states-tabular/v1.0.0
+DATASET_DIR=artifacts/data/round-states-tabular/v1.0.0
+
+uv run cs-win-prob-train-demos demos/ --prepare-only --states-dir "$DATASET_DIR/prepared"
+uv run cs-win-prob-export-dataset "$DATASET_DIR/prepared" \
+  --output "$DATASET_DIR/cs2-round-states.parquet"
+uv run cs-win-prob-dataset-manifest "$DATASET_DIR/cs2-round-states.parquet" \
+  --tag "$DATASET_TAG"
 ```
 
-Each row includes `demo_filename` (the original `.dem` basename),
-`demo_sha256` (the hash of the original demo bytes), and `demo_id` (the same
-hash, used for grouping). The exporter uses a seeded 80/20 split by demo by
-default. Use `--test-fraction` or `--seed` to change the split. To keep the exact
-demo set and split assignments from a previous export, pass `--split-from` with
-that dataset. The release asset uses `round_end_reason` as its label.
-For older per-demo Parquets, rerun preparation to record the demo provenance.
+Each row includes the original `.dem` basename, its `demo_sha256`, and the
+recording-local `tick`. The pair `(demo_sha256, tick)` identifies a snapshot and
+can also be used by a graph export. The exporter uses a seeded 80/20 split by
+demo by default. Pass `--split-from` with a previous dataset to keep its exact
+demo set and split assignments. The dataset manifest records the Parquet SHA-256,
+the held-out demo hashes, and a hash of the held-out snapshot keys. Regenerate
+older per-demo Parquets to get the original ticks for a versioned release.
 
-Attach `cs2-round-states.parquet` to a draft GitHub Release, then publish it.
-The **Fit Kumo from release dataset** workflow downloads the asset from that
-release, fits KumoTabular small to the five round-end reasons on `train`, and
-computes snapshot-level accuracy, log loss, and multiclass Brier score on `test`.
-The Actions run uploads `round-end-reason-context.parquet` and `metrics.json`
-as the `kumo-round-end-reason` artifact.
-You can also run the workflow manually by entering a release tag.
+After pushing the workflow, publish the dataset release and dispatch the
+model workflow with the dataset tag and the model's own version.
+
+```sh
+gh release create "$DATASET_TAG" \
+  "$DATASET_DIR/cs2-round-states.parquet" "$DATASET_DIR/dataset-manifest.json" \
+  --target "$(git rev-parse HEAD)" --title "$DATASET_TAG" \
+  --notes 'Tabular CS2 snapshots with demo-level train and test splits.'
+
+gh workflow run kumo-release.yml \
+  -f dataset_tag="$DATASET_TAG" -f model_name=kumo-round-end -f model_version=1.0.0
+```
+
+The workflow verifies the dataset manifest, fits KumoTabular small to
+`round_end_reason`, and evaluates accuracy, log loss, and multiclass Brier score
+on held-out demos. After success, it publishes `model/kumo-round-end/v1.0.0`
+with `round-end-reason-context.parquet`, `metrics.json`, and `model-manifest.json`.
+The model manifest records the dataset tag and SHA-256, held-out split, training
+commit, and checksums for the model and metrics files.
 
 Run the same fit and evaluation locally with:
 

@@ -1,37 +1,53 @@
-name: Fit Kumo from release dataset
+name: Fit and publish versioned model
+run-name: ${{ inputs.model_name }} v${{ inputs.model_version }} from ${{ inputs.dataset_tag }}
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
-      release_tag:
-        description: Release tag containing cs2-round-states.parquet
+      dataset_tag:
+        description: Published data release tag
+        required: true
+        type: string
+      model_name:
+        description: Model recipe
+        required: true
+        type: choice
+        options:
+          - kumo-round-end
+      model_version:
+        description: Model version, such as 1.0.0
         required: true
         type: string
 
 permissions:
   contents: read
 
+concurrency:
+  group: model-release-${{ inputs.model_name }}-${{ inputs.model_version }}
+  cancel-in-progress: false
+
+env:
+  DATASET_TAG: ${{ inputs.dataset_tag }}
+  MODEL_TAG: model/${{ inputs.model_name }}/v${{ inputs.model_version }}
+
 jobs:
   fit:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - name: Check out code
+      - name: Check out training code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Download dataset
+      - name: Download the selected dataset release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
         run: |
-          : "${RELEASE_TAG:?A dataset release tag is required}"
           mkdir -p artifacts/release-input
           gh release download --repo "$GITHUB_REPOSITORY" \
-            --pattern cs2-round-states.parquet --dir artifacts/release-input -- "$RELEASE_TAG"
+            --pattern cs2-round-states.parquet --pattern dataset-manifest.json \
+            --dir artifacts/release-input -- "$DATASET_TAG"
 
       - name: Set up uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
@@ -40,14 +56,15 @@ jobs:
           python-version: "3.15"
           enable-cache: false
 
-      - name: Fit and evaluate Kumo
+      - name: Validate provenance, fit, and evaluate Kumo
         env:
           OMP_NUM_THREADS: "2"
           MKL_NUM_THREADS: "2"
         run: |
           uv run --locked --no-dev --group kumo cs-win-prob-fit-release \
             artifacts/release-input/cs2-round-states.parquet \
-            --output-dir artifacts/release-model --device cpu --target round_end_reason
+            --output-dir artifacts/release-model --device cpu --target round_end_reason \
+            --dataset-tag "$DATASET_TAG" --model-tag "$MODEL_TAG" --training-commit "$GITHUB_SHA"
 
       - name: Summarize evaluation
         run: |
@@ -57,11 +74,42 @@ jobs:
             printf '%s\n' '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload fitted context and metrics
+      - name: Store the model release files
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: kumo-round-end-reason
+          name: model-release
           path: |
             artifacts/release-model/round-end-reason-context.parquet
             artifacts/release-model/metrics.json
+            artifacts/release-model/model-manifest.json
           if-no-files-found: error
+
+  publish:
+    needs: fit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download the fitted model
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: model-release
+          path: release-model
+
+      - name: Publish the model release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if existing_commit=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$MODEL_TAG" --jq .object.sha 2>/dev/null); then
+            if [[ "$existing_commit" != "$GITHUB_SHA" ]]; then
+              printf 'Model tag %s already points to a different commit.\n' "$MODEL_TAG" >&2
+              exit 1
+            fi
+          fi
+          gh release create "$MODEL_TAG" --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --title "$MODEL_TAG" \
+            --notes "KumoTabular small fitted against $DATASET_TAG. See model-manifest.json for provenance and metrics.json for held-out evaluation." \
+            release-model/round-end-reason-context.parquet \
+            release-model/metrics.json \
+            release-model/model-manifest.json

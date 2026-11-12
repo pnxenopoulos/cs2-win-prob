@@ -112,7 +112,10 @@ def _prepare_archive(
         for path, digest in digests:
             try:
                 states = prepare_demo(
-                    Demo(path), ticks_per_round=ticks_per_round, seed=seed
+                    Demo(path),
+                    ticks_per_round=ticks_per_round,
+                    seed=seed,
+                    include_tick=True,
                 )
             except Exception as error:
                 raise RuntimeError(f"could not parse {path.name}: {error}") from error

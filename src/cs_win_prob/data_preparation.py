@@ -192,12 +192,14 @@ def _aggregate_samples(
 
 
 def _prepare_recording(
-    demo: Demo, map_name: str, ticks_per_round: int, rng: Random
+    demo: Demo, map_name: str, ticks_per_round: int, rng: Random, *, include_tick: bool
 ) -> pl.DataFrame:
     rounds = _playable_rounds(demo.rounds).select(
         "freeze_end_tick", "end_tick", "winner", "reason_name"
     )
     output_columns = (*FEATURE_COLUMNS, "round_winner", "round_end_reason")
+    if include_tick:
+        output_columns = ("tick", *output_columns)
     if rounds.is_empty():
         schema = (
             _SAMPLE_SCHEMA
@@ -262,6 +264,7 @@ def prepare_demo(
     ticks_per_round: int = DEFAULT_TICKS_PER_ROUND,
     seed: int | None = None,
     training_maps: Collection[str] = DEFAULT_TRAINING_MAPS,
+    include_tick: bool = False,
 ) -> pl.DataFrame:
     """Return one labeled row per sampled game state, in recording order.
 
@@ -276,7 +279,9 @@ def prepare_demo(
     rng = Random(seed)
     return pl.concat(
         [
-            _prepare_recording(part, map_name, ticks_per_round, rng)
+            _prepare_recording(
+                part, map_name, ticks_per_round, rng, include_tick=include_tick
+            )
             for part in demo.parts
         ]
     )

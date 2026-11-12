@@ -16,6 +16,7 @@ from cs_win_prob.data_preparation import (
     available_feature_columns,
     sha256_file,
 )
+from cs_win_prob.dataset import split_counts
 from cs_win_prob.kumo import (
     DEFAULT_CONTEXT_ROWS,
     DEFAULT_ESTIMATORS,
@@ -26,6 +27,12 @@ from cs_win_prob.kumo import (
     predict_probabilities,
     sample_context_rows,
     save_kumo_context,
+)
+from cs_win_prob.release_metadata import (
+    MODEL_CONTEXT,
+    MODEL_MANIFEST,
+    model_manifest,
+    write_manifest,
 )
 
 if TYPE_CHECKING:
@@ -38,34 +45,6 @@ _WINNER_BY_REASON = {
     "bomb_exploded": "T",
     "time_ran_out": "CT",
 }
-
-
-def _split_counts(dataset: pl.LazyFrame) -> dict[str, dict[str, int]]:
-    demos = (
-        dataset.group_by("demo_id", "demo_filename", "demo_sha256", "split")
-        .len()
-        .collect(engine="streaming")
-    )
-    invalid = demos.filter(
-        ~pl.col("demo_sha256").str.contains(r"^[0-9a-f]{64}$").fill_null(False)
-        | ~(pl.col("demo_id") == pl.col("demo_sha256")).fill_null(False)
-        | (pl.col("demo_filename").fill_null("") == "")
-    )
-    if not invalid.is_empty():
-        raise ValueError(
-            "dataset must include a filename and SHA-256 demo ID for every row"
-        )
-    if demos["demo_id"].n_unique() != demos.height:
-        raise ValueError(
-            "each demo must have consistent provenance and belong to exactly one split"
-        )
-    if set(demos["split"]) != {"train", "test"}:
-        raise ValueError("dataset must contain nonempty train and test splits")
-    counts = demos.group_by("split").agg(demos=pl.len(), rows=pl.col("len").sum())
-    return {
-        split: {"demos": demo_count, "rows": rows}
-        for split, demo_count, rows in counts.iter_rows()
-    }
 
 
 def _evaluate(
@@ -140,11 +119,7 @@ def fit_release(
     """Save a fitted context and metrics evaluated only on held-out demos."""
     if target not in {TARGET, WINNER_TARGET}:
         raise ValueError(f"unsupported Kumo target: {target}")
-    context_name = (
-        "round-end-reason-context.parquet"
-        if target == TARGET
-        else "round-win-context.parquet"
-    )
+    context_name = MODEL_CONTEXT if target == TARGET else "round-win-context.parquet"
     context_path = output_dir / context_name
     metrics_path = output_dir / "metrics.json"
     if dataset_path.resolve() in {context_path.resolve(), metrics_path.resolve()}:
@@ -166,7 +141,7 @@ def fit_release(
             .alias(WINNER_TARGET)
         )
     feature_columns = available_feature_columns(dataset.collect_schema().names())
-    counts = _split_counts(dataset)
+    counts = split_counts(dataset)
     context = sample_context_rows(
         dataset.filter(pl.col("split") == "train"),
         max_rows=context_rows,
@@ -227,6 +202,11 @@ def main() -> None:
     parser.add_argument("--num-estimators", type=int, default=DEFAULT_ESTIMATORS)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--target", choices=(TARGET, WINNER_TARGET), default=TARGET)
+    parser.add_argument("--dataset-tag", help="Published dataset release tag")
+    parser.add_argument("--model-tag", help="Model release tag to record")
+    parser.add_argument(
+        "--training-commit", help="Full Git commit SHA of the training code"
+    )
     parser.add_argument(
         "--baseline-features",
         action="store_true",
@@ -237,6 +217,19 @@ def main() -> None:
     )
     args = parser.parse_args()
     try:
+        manifest = None
+        if any((args.dataset_tag, args.model_tag, args.training_commit)):
+            if not all((args.dataset_tag, args.model_tag, args.training_commit)):
+                raise ValueError(
+                    "--dataset-tag, --model-tag, and --training-commit are required together"
+                )
+            manifest = model_manifest(
+                args.dataset,
+                args.dataset_tag,
+                args.model_tag,
+                args.training_commit,
+                args.target,
+            )
         report = fit_release(
             args.dataset,
             args.output_dir,
@@ -247,6 +240,16 @@ def main() -> None:
             target=args.target,
             baseline_features=args.baseline_features,
         )
+        if manifest is not None:
+            dataset = manifest["dataset"]
+            assert isinstance(dataset, dict)
+            if report["dataset_sha256"] != dataset["sha256"]:
+                raise ValueError("the release dataset changed during fitting")
+            manifest["assets"] = {
+                name: sha256_file(args.output_dir / name)
+                for name in (MODEL_CONTEXT, "metrics.json")
+            }
+            write_manifest(args.output_dir / MODEL_MANIFEST, manifest)
     except (ValueError, OSError, pl.exceptions.PolarsError) as error:
         parser.error(str(error))
     print(json.dumps(report["test"], indent=2))

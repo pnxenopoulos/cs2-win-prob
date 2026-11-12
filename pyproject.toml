@@ -19,6 +19,7 @@ cs-win-prob-train-demos = "cs_win_prob.demo_training:main"
 cs-win-prob-plot-rounds = "cs_win_prob.round_plot:main"
 cs-win-prob-export-dataset = "cs_win_prob.dataset:main"
 cs-win-prob-fit-release = "cs_win_prob.release_training:main"
+cs-win-prob-dataset-manifest = "cs_win_prob.release_metadata:main"
 
 [build-system]
 requires = ["hatchling"]

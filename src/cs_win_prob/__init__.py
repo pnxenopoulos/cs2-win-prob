@@ -31,7 +31,10 @@ def main() -> None:
         parser.error("the output must be a different file from the input demo")
 
     prepare_demo(
-        Demo(args.demo), ticks_per_round=args.ticks_per_round, seed=args.seed
+        Demo(args.demo),
+        ticks_per_round=args.ticks_per_round,
+        seed=args.seed,
+        include_tick=True,
     ).write_parquet(
         args.output, metadata=demo_metadata(args.demo, sha256_file(args.demo))
     )
