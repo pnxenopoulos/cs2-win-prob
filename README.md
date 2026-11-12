@@ -103,9 +103,10 @@ probabilities at each scored tick as Parquet.
 
 ### Release tags
 
-All datasets describe round states. Name new dataset families by representation
-using `data/<representation>/vX.Y.Z`, such as `data/graph/v1.0.0`. The current
-Kumo workflow accepts tabular datasets tagged `data/round-states-tabular/vX.Y.Z`.
+All datasets describe round states. Name dataset families by representation
+using `data/<representation>/vX.Y.Z`. Use `data/tabular/v1.0.0` for the tabular
+dataset and `data/graph/v1.0.0` for a future graph dataset. The Kumo workflow also
+accepts legacy tabular tags under `data/round-states-tabular/`.
 
 Name models by architecture and prediction target using
 `model/<architecture>-<target>/vX.Y.Z`. For example,
@@ -124,8 +125,8 @@ the name of a model that predicts the winning side.
 Prepare one Parquet per demo, combine them, and write a manifest for the dataset tag.
 
 ```sh
-DATASET_TAG=data/round-states-tabular/v1.0.0
-DATASET_DIR=artifacts/data/round-states-tabular/v1.0.0
+DATASET_TAG=data/tabular/v1.0.0
+DATASET_DIR=artifacts/data/tabular/v1.0.0
 
 uv run cs-win-prob-train-demos demos/ --prepare-only --states-dir "$DATASET_DIR/prepared"
 uv run cs-win-prob-export-dataset "$DATASET_DIR/prepared" \
@@ -151,7 +152,7 @@ gh release create "$DATASET_TAG" \
   --target "$(git rev-parse HEAD)" --title "$DATASET_TAG" \
   --notes 'Tabular CS2 snapshots with demo-level train and test splits.'
 
-gh workflow run kumo-release.yml \
+gh workflow run kumo-release.yml --ref main \
   -f dataset_tag="$DATASET_TAG" -f model_name=kumo-round-end -f model_version=1.0.0
 ```
 

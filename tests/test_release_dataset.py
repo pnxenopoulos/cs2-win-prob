@@ -141,12 +141,15 @@ def test_release_fit_rejects_demo_in_both_splits(tmp_path: Path) -> None:
         release_training.fit_release(dataset_path, tmp_path / "model")
 
 
-def test_versioned_model_requires_the_released_snapshot_data(tmp_path: Path) -> None:
+@pytest.mark.parametrize("dataset_name", ["tabular", "round-states-tabular"])
+def test_versioned_model_requires_the_released_snapshot_data(
+    tmp_path: Path, dataset_name: str
+) -> None:
     for number in range(2):
         _write_demo_states(tmp_path, number, include_tick=True)
     path = tmp_path / "cs2-round-states.parquet"
     export_dataset(tmp_path, path)
-    tag = "data/round-states-tabular/v1.0.0"
+    tag = f"data/{dataset_name}/v1.0.0"
     dataset = dataset_manifest(path, tag)
     write_manifest(path.with_name(DATASET_MANIFEST), dataset)
 
@@ -155,6 +158,7 @@ def test_versioned_model_requires_the_released_snapshot_data(tmp_path: Path) -> 
     assert model["tag"] == model_tag
     assert model["version"] == "1.2.3"
     assert model["dataset"] == dataset
+    assert dataset["name"] == dataset_name
     assert dataset["snapshot_key"] == ["demo_sha256", "tick"]
 
     states = pl.read_parquet(path)

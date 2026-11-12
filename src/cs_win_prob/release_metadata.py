@@ -32,7 +32,12 @@ def _version(tag: str, prefix: str) -> str:
 
 def dataset_manifest(dataset_path: Path, tag: str) -> dict[str, object]:
     """Describe the tabular release and hash its exact held-out snapshot keys."""
-    version = _version(tag, "data/round-states-tabular")
+    name = (
+        "round-states-tabular"
+        if tag.startswith("data/round-states-tabular/")
+        else "tabular"
+    )
+    version = _version(tag, f"data/{name}")
     if dataset_path.name != DATASET_FILENAME:
         raise ValueError(f"the tabular release asset must be named {DATASET_FILENAME}")
     dataset = pl.scan_parquet(dataset_path, glob=False, hive_partitioning=False)
@@ -71,7 +76,7 @@ def dataset_manifest(dataset_path: Path, tag: str) -> dict[str, object]:
         snapshot_hash.update(f"{demo_id}:{tick}\n".encode("ascii"))
     return {
         "schema_version": 1,
-        "name": "round-states-tabular",
+        "name": name,
         "version": version,
         "tag": tag,
         "asset": DATASET_FILENAME,
@@ -132,7 +137,7 @@ def main() -> None:
     parser.add_argument(
         "--tag",
         required=True,
-        help="Dataset release tag, such as data/round-states-tabular/v1.0.0",
+        help="Dataset release tag, such as data/tabular/v1.0.0",
     )
     args = parser.parse_args()
     try:

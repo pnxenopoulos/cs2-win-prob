@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       dataset_tag:
-        description: Published data release tag
+        description: Published data release tag, such as data/tabular/v1.0.0
         required: true
         type: string
       model_name:
@@ -53,7 +53,8 @@ jobs:
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.11.28"
-          python-version: "3.15"
+          # PyYAML 6.0.3 has Linux wheels for CPython 3.14.
+          python-version: "3.14"
           enable-cache: false
 
       - name: Validate provenance, fit, and evaluate Kumo
